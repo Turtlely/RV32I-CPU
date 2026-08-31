@@ -1,0 +1,47 @@
+# Simulation build products
+sim/*
+!sim/.gitkeep
+
+# Icarus Verilog
+*.vvp
+
+# Waveforms
+*.vcd
+*.fst
+*.lxt
+*.lxt2
+
+# Verilator output
+obj_dir/
+
+# Other HDL simulator working directories
+work/
+work-obj*/
+*.wlf
+*.vstf
+transcript
+vsim.wlf
+
+# Synthesis and FPGA tool output
+build/
+output/
+*.log
+*.jou
+*.str
+
+# Code coverage
+coverage/
+*.ucdb
+
+# Editor settings and temporary files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Windows/OneDrive temporary files
+~$*
+*.tmp
