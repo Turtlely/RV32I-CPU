@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RV32I Execution Trace</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        background: #3a6ea5;
+        color: #000;
+        font: 12px Tahoma, Verdana, Arial, sans-serif;
+    }
+    .window {
+        margin: 10px;
+        min-width: 900px;
+        background: #ece9d8;
+        border: 2px outset #fff;
+        box-shadow: 2px 2px 0 #003c74;
+    }
+    .titlebar {
+        padding: 4px 7px;
+        color: #fff;
+        font-weight: bold;
+        background: linear-gradient(90deg, #0a246a, #3a6ea5, #a6caf0);
+    }
+    .toolbar, .statusbar {
+        padding: 5px;
+        border-bottom: 1px solid #aca899;
+    }
+    .statusbar {
+        border-top: 1px solid #fff;
+        border-bottom: 0;
+    }
+    button, input, select {
+        min-height: 23px;
+        font: inherit;
+    }
+    button {
+        padding: 2px 12px;
+        background: #ece9d8;
+        border: 2px outset #fff;
+    }
+    button:active { border-style: inset; }
+    button:disabled { color: #888; }
+    input, select {
+        background: #fff;
+        border: 2px inset #fff;
+        padding: 2px 4px;
+    }
+    fieldset {
+        margin: 6px;
+        padding: 7px;
+        border: 2px groove #fff;
+    }
+    legend { padding: 0 5px; }
+    .help { margin-left: 10px; color: #333; }
+    .layout {
+        display: grid;
+        grid-template-columns: minmax(510px, 3fr) minmax(350px, 2fr);
+        gap: 0;
+    }
+    .details {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(110px, 1fr));
+        border-top: 1px solid #aca899;
+        border-left: 1px solid #aca899;
+    }
+    .detail {
+        padding: 4px 6px;
+        background: #fff;
+        border-right: 1px solid #aca899;
+        border-bottom: 1px solid #aca899;
+        font-family: Consolas, "Courier New", monospace;
+    }
+    .detail b { display: block; font: 11px Tahoma, sans-serif; color: #444; }
+    .registers {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-top: 1px solid #808080;
+        border-left: 1px solid #808080;
+    }
+    .reg {
+        padding: 3px 5px;
+        background: #fff;
+        border-right: 1px solid #c0c0c0;
+        border-bottom: 1px solid #c0c0c0;
+        font-family: Consolas, "Courier New", monospace;
+    }
+    .changed { background: #ffff80 !important; color: #800000; font-weight: bold; }
+    .memory {
+        margin-top: 6px;
+        padding: 5px;
+        height: 260px;
+        overflow: auto;
+        white-space: pre;
+        background: #fff;
+        border: 2px inset #fff;
+        font: 12px Consolas, "Courier New", monospace;
+        line-height: 1.5;
+    }
+    .byte-changed { background: #ffff80; color: #c00000; font-weight: bold; }
+    .trace-wrap {
+        height: 660px;
+        overflow: auto;
+        background: #fff;
+        border: 2px inset #fff;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        padding: 4px;
+        text-align: left;
+        background: #ece9d8;
+        border: 1px outset #fff;
+    }
+    td {
+        padding: 3px 5px;
+        white-space: nowrap;
+        border-bottom: 1px solid #ddd;
+        font-family: Consolas, "Courier New", monospace;
+    }
+    tr.selected td { color: #fff; background: #0a246a; }
+    tr:hover td { background: #dbe9ff; }
+    tr.selected:hover td { background: #0a246a; }
+    .empty {
+        padding: 45px;
+        text-align: center;
+        color: #555;
+    }
+</style>
+</head>
+<body>
+<div class="window">
+    <div class="titlebar">RV32I CPU Execution Trace Viewer</div>
+    <div class="toolbar">
+        <button id="openButton">Open Trace...</button>
+        <input id="fileInput" type="file" accept=".csv,text/csv" hidden>
+        <button id="previousButton" disabled>&lt; Previous</button>
+        <button id="nextButton" disabled>Next &gt;</button>
+        <label>Cycle: <input id="cycleInput" type="number" min="1" value="1" disabled style="width:75px"></label>
+        <span class="help">Load <b>sim/program_trace.csv</b>. Use Left/Right arrow keys to step.</span>
+    </div>
+
+    <div class="layout">
+        <div>
+            <fieldset>
+                <legend>Current cycle</legend>
+                <div id="details" class="details"><div class="empty">Open a trace file to begin.</div></div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Registers (yellow values changed on this cycle)</legend>
+                <div id="registers" class="registers"></div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Data memory</legend>
+                <label>Address: <input id="memoryAddress" value="0x000" style="width:90px"></label>
+                <label>Bytes:
+                    <select id="memoryLength">
+                        <option>32</option><option selected>64</option><option>128</option>
+                        <option>256</option><option>512</option><option>1024</option>
+                    </select>
+                </label>
+                <button id="memoryGo">Go</button>
+                <div id="memory" class="memory">No trace loaded.</div>
+            </fieldset>
+        </div>
+
+        <fieldset>
+            <legend>Execution history</legend>
+            <div class="trace-wrap">
+                <table>
+                    <thead><tr><th>Cycle</th><th>PC</th><th>Instruction</th><th>Decoded</th><th>Effect</th></tr></thead>
+                    <tbody id="traceBody"></tbody>
+                </table>
+            </div>
+        </fieldset>
+    </div>
+    <div id="status" class="statusbar">No trace loaded.</div>
+</div>
+
+<script>
+(() => {
+    let headers = [];
+    let rows = [];
+    let index = 0;
+    let column = {};
+
+    const $ = id => document.getElementById(id);
+    const openButton = $('openButton');
+    const fileInput = $('fileInput');
+    const previousButton = $('previousButton');
+    const nextButton = $('nextButton');
+    const cycleInput = $('cycleInput');
+
+    function parseHex(value) {
+        const parsed = Number.parseInt(value || '0', 16);
+        return Number.isFinite(parsed) ? parsed >>> 0 : 0;
+    }
+
+    function hex(value, digits = 8) {
+        return (value >>> 0).toString(16).toUpperCase().padStart(digits, '0');
+    }
+
+    function signed(value, bits) {
+        const sign = 2 ** (bits - 1);
+        const mask = 2 ** bits;
+        return value >= sign ? value - mask : value;
+    }
+
+    function regName(number) { return `x${number}`; }
+
+    function decodeInstruction(text) {
+        const ins = parseHex(text);
+        const opcode = ins & 0x7f;
+        const rd = (ins >>> 7) & 31;
+        const f3 = (ins >>> 12) & 7;
+        const rs1 = (ins >>> 15) & 31;
+        const rs2 = (ins >>> 20) & 31;
+        const f7 = (ins >>> 25) & 0x7f;
+        const iImm = ins >> 20;
+        const sImm = signed((((ins >>> 25) << 5) | ((ins >>> 7) & 31)) & 0xfff, 12);
+        const bImm = signed((((ins >>> 31) & 1) << 12) | (((ins >>> 7) & 1) << 11) |
+                            (((ins >>> 25) & 0x3f) << 5) | (((ins >>> 8) & 15) << 1), 13);
+        const jImm = signed((((ins >>> 31) & 1) << 20) | (((ins >>> 12) & 0xff) << 12) |
+                            (((ins >>> 20) & 1) << 11) | (((ins >>> 21) & 0x3ff) << 1), 21);
+        const rOps = {
+            '0,0':'add','0,32':'sub','1,0':'sll','2,0':'slt','3,0':'sltu',
+            '4,0':'xor','5,0':'srl','5,32':'sra','6,0':'or','7,0':'and'
+        };
+        const iOps = {0:'addi',2:'slti',3:'sltiu',4:'xori',6:'ori',7:'andi'};
+        const loads = {0:'lb',1:'lh',2:'lw',4:'lbu',5:'lhu'};
+        const stores = {0:'sb',1:'sh',2:'sw'};
+        const branches = {0:'beq',1:'bne',4:'blt',5:'bge',6:'bltu',7:'bgeu'};
+
+        if (opcode === 0x33) {
+            const op = rOps[`${f3},${f7}`] || 'illegal';
+            return `${op} ${regName(rd)}, ${regName(rs1)}, ${regName(rs2)}`;
+        }
+        if (opcode === 0x13) {
+            if (f3 === 1) return `slli ${regName(rd)}, ${regName(rs1)}, ${rs2}`;
+            if (f3 === 5) return `${f7 === 32 ? 'srai' : 'srli'} ${regName(rd)}, ${regName(rs1)}, ${rs2}`;
+            return `${iOps[f3] || 'illegal'} ${regName(rd)}, ${regName(rs1)}, ${iImm}`;
+        }
+        if (opcode === 0x03) return `${loads[f3] || 'illegal'} ${regName(rd)}, ${iImm}(${regName(rs1)})`;
+        if (opcode === 0x23) return `${stores[f3] || 'illegal'} ${regName(rs2)}, ${sImm}(${regName(rs1)})`;
+        if (opcode === 0x63) return `${branches[f3] || 'illegal'} ${regName(rs1)}, ${regName(rs2)}, ${bImm >= 0 ? '+' : ''}${bImm}`;
+        if (opcode === 0x37) return `lui ${regName(rd)}, 0x${hex(ins >>> 12, 5)}`;
+        if (opcode === 0x17) return `auipc ${regName(rd)}, 0x${hex(ins >>> 12, 5)}`;
+        if (opcode === 0x6f) return `jal ${regName(rd)}, ${jImm >= 0 ? '+' : ''}${jImm}`;
+        if (opcode === 0x67) return `jalr ${regName(rd)}, ${iImm}(${regName(rs1)})`;
+        return `unknown 0x${hex(ins, 8)}`;
+    }
+
+    function value(row, name) { return row[column[name]]; }
+
+    function effectFor(row) {
+        const effects = [];
+        if (value(row, 'reg_write') === '1' && value(row, 'rd') !== '0')
+            effects.push(`x${value(row, 'rd')} <- ${value(row, 'write_data').toUpperCase()}`);
+        if (value(row, 'mem_write') === '1')
+            effects.push(`mem[${value(row, 'alu_result').toUpperCase()}] <- ${value(row, 'rs2_data').toUpperCase()}`);
+        if (value(row, 'take_branch') === '1') effects.push('branch taken');
+        if (value(row, 'jump') === '1') effects.push('jump');
+        return effects.join('; ') || '-';
+    }
+
+    function detail(label, text, changed = false) {
+        return `<div class="detail${changed ? ' changed' : ''}"><b>${label}</b>${text}</div>`;
+    }
+
+    function renderDetails() {
+        if (!rows.length) return;
+        const row = rows[index];
+        $('details').innerHTML =
+            detail('Executed PC', `0x${value(row, 'pc').toUpperCase()}`) +
+            detail('Instruction', `0x${value(row, 'instr').toUpperCase()}`) +
+            detail('Decoded', decodeInstruction(value(row, 'instr'))) +
+            detail('Next PC', `0x${value(row, 'next_pc').toUpperCase()}`) +
+            detail('rs1', `x${value(row, 'rs1')} = ${value(row, 'rs1_data').toUpperCase()}`) +
+            detail('rs2', `x${value(row, 'rs2')} = ${value(row, 'rs2_data').toUpperCase()}`) +
+            detail('rd', `x${value(row, 'rd')}`) +
+            detail('Immediate', value(row, 'imm').toUpperCase()) +
+            detail('ALU operands', `${value(row, 'alu_a').toUpperCase()} / ${value(row, 'alu_b').toUpperCase()}`) +
+            detail('ALU operation', value(row, 'alu_op').toUpperCase()) +
+            detail('ALU result', value(row, 'alu_result').toUpperCase()) +
+            detail('Write-back', value(row, 'write_data').toUpperCase()) +
+            detail('Register write', value(row, 'reg_write')) +
+            detail('Memory read/write', `${value(row, 'mem_read')} / ${value(row, 'mem_write')}`) +
+            detail('Branch/taken', `${value(row, 'branch')} / ${value(row, 'take_branch')}`) +
+            detail('Jump', value(row, 'jump'));
+    }
+
+    function renderRegisters() {
+        if (!rows.length) return;
+        const row = rows[index];
+        const previous = index > 0 ? rows[index - 1] : null;
+        let html = '';
+        for (let i = 0; i < 32; i++) {
+            const current = value(row, `x${i}`).toUpperCase();
+            const changed = previous && current !== value(previous, `x${i}`).toUpperCase();
+            html += `<div class="reg${changed ? ' changed' : ''}">x${String(i).padEnd(2, ' ')} ${current}</div>`;
+        }
+        $('registers').innerHTML = html;
+    }
+
+    function renderMemory() {
+        if (!rows.length) return;
+        let startText = $('memoryAddress').value.trim().toLowerCase();
+        let start = Number.parseInt(startText.startsWith('0x') ? startText.slice(2) : startText, 16);
+        if (!Number.isFinite(start)) start = 0;
+        start = Math.max(0, Math.min(1023, start));
+        const length = Number.parseInt($('memoryLength').value, 10);
+        const end = Math.min(1024, start + length);
+        const row = rows[index];
+        const previous = index > 0 ? rows[index - 1] : null;
+        let html = '';
+
+        for (let address = start - (start % 16); address < end; address += 16) {
+            html += `${hex(address, 3)}  `;
+            let ascii = '';
+            for (let offset = 0; offset < 16; offset++) {
+                const location = address + offset;
+                if (location >= 1024) { html += '   '; ascii += ' '; continue; }
+                const byte = value(row, `m${location}`).toUpperCase();
+                const changed = previous && byte !== value(previous, `m${location}`).toUpperCase();
+                html += changed ? `<span class="byte-changed">${byte}</span> ` : `${byte} `;
+                const number = parseHex(byte);
+                ascii += number >= 32 && number <= 126 ? String.fromCharCode(number) : '.';
+            }
+            html += ` |${ascii}|\n`;
+        }
+        $('memory').innerHTML = html;
+    }
+
+    function selectCycle(newIndex) {
+        if (!rows.length) return;
+        index = Math.max(0, Math.min(rows.length - 1, newIndex));
+        cycleInput.value = value(rows[index], 'cycle');
+        previousButton.disabled = index === 0;
+        nextButton.disabled = index === rows.length - 1;
+        document.querySelectorAll('#traceBody tr').forEach((tr, i) => tr.classList.toggle('selected', i === index));
+        const selected = document.querySelector('#traceBody tr.selected');
+        if (selected) selected.scrollIntoView({block: 'nearest'});
+        renderDetails();
+        renderRegisters();
+        renderMemory();
+        $('status').textContent = `Cycle ${index + 1} of ${rows.length} | PC 0x${value(rows[index], 'pc').toUpperCase()}`;
+    }
+
+    function renderTraceTable() {
+        $('traceBody').innerHTML = rows.map((row, i) =>
+            `<tr data-index="${i}"><td>${value(row, 'cycle')}</td>` +
+            `<td>${value(row, 'pc').toUpperCase()}</td>` +
+            `<td>${value(row, 'instr').toUpperCase()}</td>` +
+            `<td>${decodeInstruction(value(row, 'instr'))}</td>` +
+            `<td>${effectFor(row)}</td></tr>`
+        ).join('');
+        document.querySelectorAll('#traceBody tr').forEach(tr =>
+            tr.addEventListener('click', () => selectCycle(Number(tr.dataset.index))));
+    }
+
+    function loadCsv(text, filename) {
+        const lines = text.replace(/\r/g, '').trim().split('\n').filter(Boolean);
+        if (lines.length < 2) throw new Error('The trace contains no cycle records.');
+        headers = lines[0].split(',');
+        column = Object.fromEntries(headers.map((name, i) => [name, i]));
+        rows = lines.slice(1).map(line => line.split(','));
+        if (!('cycle' in column) || !('x31' in column) || !('m1023' in column))
+            throw new Error('This is not a complete RV32I trace file.');
+        renderTraceTable();
+        cycleInput.disabled = false;
+        cycleInput.max = rows.length;
+        $('status').textContent = `${filename}: ${rows.length} cycles loaded.`;
+        selectCycle(0);
+    }
+
+    openButton.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', event => {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            try { loadCsv(reader.result, file.name); }
+            catch (error) { alert(`Unable to load trace:\n${error.message}`); }
+        };
+        reader.readAsText(file);
+    });
+    previousButton.addEventListener('click', () => selectCycle(index - 1));
+    nextButton.addEventListener('click', () => selectCycle(index + 1));
+    cycleInput.addEventListener('change', () => selectCycle(Number(cycleInput.value) - 1));
+    $('memoryGo').addEventListener('click', renderMemory);
+    $('memoryLength').addEventListener('change', renderMemory);
+    $('memoryAddress').addEventListener('keydown', event => { if (event.key === 'Enter') renderMemory(); });
+    document.addEventListener('keydown', event => {
+        if (event.target.tagName === 'INPUT') return;
+        if (event.key === 'ArrowLeft') selectCycle(index - 1);
+        if (event.key === 'ArrowRight') selectCycle(index + 1);
+    });
+})();
+</script>
+</body>
+</html>
