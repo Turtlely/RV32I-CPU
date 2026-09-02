@@ -56,7 +56,7 @@ module cpu_tb;
         begin
             if (dut.rf.regs[address] !== expected) begin
                 $error("CPU x%0d expected=%h got=%h at PC=%h", address, expected,
-                       dut.rf.regs[address], dut.pc_out);
+                       dut.rf.regs[address], dut.pc_if);
                 errors = errors + 1;
             end
         end
@@ -75,7 +75,7 @@ module cpu_tb;
         begin
             for (cycle = 0; cycle < count; cycle = cycle + 1) begin
                 @(posedge clk); #1;
-                if (^dut.pc_out === 1'bx) begin
+                if (^dut.pc_if === 1'bx) begin
                     $error("CPU PC became unknown after %0d cycles", cycle + 1);
                     errors = errors + 1;
                     cycle = count;
@@ -113,7 +113,7 @@ module cpu_tb;
         load_word(80, enc_i(0,18,3'b000,19,7'b1100111));     // jalr x19,x18,0
         load_word(84, enc_i(99,0,3'b000,20,7'b0010011));     // skipped
         load_word(88, enc_i(20,0,3'b000,20,7'b0010011));
-        run_cycles(24);
+        run_cycles(40);
         check_reg(0,0); check_reg(1,5); check_reg(2,32'hFFFFFFFD);
         check_reg(3,2); check_reg(4,8); check_reg(5,5); check_reg(6,32'hFFFFFFFD);
         check_reg(7,32'hFFFFFFF8); check_reg(8,20); check_reg(9,32'h7FFFFFFE);
@@ -127,7 +127,7 @@ module cpu_tb;
         load_word(4, enc_i(2,0,3'b000,2,7'b0010011));
         load_word(8, enc_b(8,2,1,3'b000,7'b1100011));       // beq not taken
         load_word(12, enc_i(3,0,3'b000,3,7'b0010011));
-        run_cycles(4);
+        run_cycles(12);
         check_reg(3,3);
 
         // Program 3: taken branch must select PC + immediate and skip address 12.
@@ -137,8 +137,62 @@ module cpu_tb;
         load_word(8, enc_b(8,2,1,3'b000,7'b1100011));       // beq to 16
         load_word(12, enc_i(99,0,3'b000,3,7'b0010011));
         load_word(16, enc_i(3,0,3'b000,3,7'b0010011));
-        run_cycles(5);
+        run_cycles(14);
         check_reg(3,3);
+
+        // Program 4: a load-use dependency must insert exactly the needed bubble,
+        // then forward the loaded value into both ALU operands and a later store.
+        reset_cpu();
+        dut.dmem.mem[0] = 8'h0B;
+        dut.dmem.mem[1] = 8'h00;
+        dut.dmem.mem[2] = 8'h00;
+        dut.dmem.mem[3] = 8'h00;
+        load_word(0,  enc_i(0,0,3'b010,1,7'b0000011));
+        load_word(4,  enc_r(0,1,1,3'b000,2,7'b0110011));
+        load_word(8,  enc_s(4,2,0,3'b010,7'b0100011));
+        run_cycles(14);
+        check_reg(1,11);
+        check_reg(2,22);
+        if ({dut.dmem.mem[7],dut.dmem.mem[6],dut.dmem.mem[5],dut.dmem.mem[4]} !== 32'd22) begin
+            $error("CPU load-use/store forwarding expected memory[4]=22");
+            errors = errors + 1;
+        end
+
+        // Program 5: EX/MEM forwarding must take priority over an older MEM/WB
+        // write to the same register.
+        reset_cpu();
+        load_word(0, enc_i(1,0,3'b000,1,7'b0010011));
+        load_word(4, enc_i(1,1,3'b000,1,7'b0010011));
+        load_word(8, enc_r(0,0,1,3'b000,2,7'b0110011));
+        run_cycles(12);
+        check_reg(1,2);
+        check_reg(2,2);
+
+        // Program 6: when the producer is in WB while the consumer is in ID,
+        // the register-file write-through path must supply the new value.
+        reset_cpu();
+        load_word(0,  enc_i(7,0,3'b000,1,7'b0010011));
+        load_word(4,  enc_i(0,0,3'b000,0,7'b0010011));
+        load_word(8,  enc_i(0,0,3'b000,0,7'b0010011));
+        load_word(12, enc_i(1,1,3'b000,2,7'b0010011));
+        run_cycles(12);
+        check_reg(2,8);
+
+        // Program 7: neither wrong-path instruction following a taken branch
+        // may modify architectural state.
+        reset_cpu();
+        load_word(0,  enc_i(1,0,3'b000,1,7'b0010011));
+        load_word(4,  enc_b(12,1,1,3'b000,7'b1100011));
+        load_word(8,  enc_i(99,0,3'b000,3,7'b0010011));
+        load_word(12, enc_s(0,1,0,3'b010,7'b0100011));
+        load_word(16, enc_i(5,0,3'b000,4,7'b0010011));
+        run_cycles(16);
+        check_reg(3,0);
+        check_reg(4,5);
+        if ({dut.dmem.mem[3],dut.dmem.mem[2],dut.dmem.mem[1],dut.dmem.mem[0]} !== 32'd0) begin
+            $error("CPU taken branch allowed a wrong-path store");
+            errors = errors + 1;
+        end
 
         if (errors == 0) $display("PASS: cpu_tb");
         else $fatal(1, "FAIL: cpu_tb had %0d errors", errors);

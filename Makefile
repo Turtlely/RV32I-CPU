@@ -9,17 +9,17 @@ RISCV_ASFLAGS = -march=rv32i -mabi=ilp32
 RISCV_LDFLAGS = -m elf32lriscv -Ttext=0x00000000 -nostdlib
 DEBUG_CYCLES ?= 20
 DEBUG_MEM_BYTES ?= 32
-TRACE_CYCLES ?= 100
+TRACE_CYCLES ?= 1200
 RTL = $(wildcard rtl/*v)
 TB = $(wildcard tb/*v)
-TEST_NAMES = alu alu_mux branch_cond control counter decoder mem pc pc_mux regfile wb_mux cpu
+TEST_NAMES = alu alu_mux branch_cond control counter decoder mem pc pc_mux regfile wb_mux if_id_reg id_ex_reg ex_mem_reg mem_wb_reg hazard_detect forward_unit cpu
 TEST_BINS = $(addprefix sim/,$(addsuffix _tb.vvp,$(TEST_NAMES)))
 
 all: test
 
 lint:
 	$(IV) $(IVFLAGS) -t null $(RTL) $(TB)
-	wsl verilator --lint-only -Wall --top-module counter $(RTL)
+	wsl verilator --lint-only -Wall --top-module cpu $(RTL)
 	@echo lint passed :D
 
 test: | sim
@@ -29,7 +29,7 @@ sim/%_tb.vvp: tb/%_tb.v $(RTL) | sim
 	$(IV) $(IVFLAGS) -s $*_tb -o $@ $(RTL) $<
 
 sim:
-	mkdir -p sim
+	powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path 'sim' | Out-Null"
 
 clean:
 	rm -f $(TEST_BINS) sim/*.vcd sim/program_trace.csv sw/program.o sw/program.elf sw/program.hex

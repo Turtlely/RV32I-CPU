@@ -41,8 +41,13 @@ module regfile (
     reg [31:0] regs [31:0];
 
     // Asynchronous read.
-    assign read_data_A = (read_addr_A != 5'b0) ? regs[read_addr_A] : 32'b0;
-    assign read_data_B = (read_addr_B != 5'b0) ? regs[read_addr_B] : 32'b0;
+    assign read_data_A = (read_addr_A == 5'b0) ? 32'b0 :
+                            (write_en && write_addr == read_addr_A) ? write_data : 
+                                                                        regs[read_addr_A];
+
+    assign read_data_B = (read_addr_B == 5'b0) ? 32'b0 :
+                            (write_en && write_addr == read_addr_B) ? write_data :
+                                                                        regs[read_addr_B];
 
     always @(posedge clk) begin
         // Synchronous reset.

@@ -5,7 +5,7 @@
  * Inputs/Outputs: None; all stimulus and checks are internal.
  */
 module pc_tb;
-    reg clk, rst;
+    reg clk, rst, en;
     reg [31:0] next_pc;
     wire [31:0] pc;
     integer errors, i;
@@ -25,10 +25,13 @@ module pc_tb;
     endtask
 
     initial begin
-        errors = 0; rst = 1; next_pc = 32'hDEADBEEF;
+        errors = 0; rst = 1; en = 1; next_pc = 32'hDEADBEEF;
         clock_and_check(0); clock_and_check(0);
         @(negedge clk); rst = 0; next_pc = 32'h00000100;
         clock_and_check(32'h00000100);
+        @(negedge clk); en = 0; next_pc = 32'hAAAAAAAA;
+        clock_and_check(32'h00000100);
+        @(negedge clk); en = 1;
         for (i = 0; i < 200; i = i + 1) begin
             @(negedge clk); next_pc = $urandom; clock_and_check(next_pc);
         end

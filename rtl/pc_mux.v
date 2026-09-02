@@ -23,8 +23,14 @@ module pc_mux (
     output [31:0] next_pc
 
 );
+    // ensures jump_target is even
     wire [31:0] jump_target = alu_result & ~32'b1;
 
+    /*
+    If we are going to jump, then next_pc = jump_target
+    If we are going to take a branch, then next_pc = branch_target
+    otherwise, next_pc = pc+4 (increment to next instruction in sequence like normal)
+    */
     assign next_pc = jump ? jump_target : 
                         take_branch ? branch_target :
                             pc_plus_4;

@@ -1,5 +1,17 @@
 `timescale 1ns/1ps
 
+/*
+ * Module: program_tb
+ * Purpose: Load and execute a bare-metal program while producing debug,
+ *          waveform, and machine-readable execution traces.
+ *
+ * Inputs:
+ *   None. Clock, reset, program loading, and run length are generated internally.
+ *
+ * Outputs:
+ *   None. Results are written to the console, VCD, and optional CSV trace.
+ */
+
 module program_tb;
     reg clk, rst;
     integer cycle;
@@ -22,6 +34,12 @@ module program_tb;
     reg trace_branch, trace_jump, trace_alu_a_src, trace_alu_b_src;
     reg trace_take_branch;
 
+    // Debug-only instruction tags. The functional datapath does not need to
+    // carry instruction words through MEM and WB, but the trace viewer does.
+    reg        valid_id, valid_ex, valid_mem, valid_wb;
+    reg [31:0] instr_ex, instr_mem, instr_wb;
+    reg [31:0] pc_ex, pc_mem, pc_wb;
+
     always #5 clk = ~clk;
 
     cpu dut(.clk(clk),
@@ -31,23 +49,24 @@ module program_tb;
         begin
             $display("");
             $display("=============== STATE AFTER CLOCK EDGE %0d ===============", cycle);
-            $display("FETCH PC : %08h    NEXT PC  : %08h", dut.pc_out, dut.next_pc);
-            $display("NEXT INST: %08h    IMM      : %08h", dut.instr, dut.imm);
+            $display("IF  PC   : %08h    INSTR    : %08h    NEXT PC: %08h", dut.pc_if, dut.instruction_if, dut.next_pc_if);
+            $display("ID  PC   : %08h    INSTR    : %08h", dut.pc_id, dut.instruction_id);
+            $display("EX  PC   : %08h    IMM      : %08h", dut.pc_ex, dut.immediate_ex);
             $display("OPCODE   : %07b      FUNCT3   : %03b      FUNCT7: %07b",
-                     dut.opcode, dut.funct3, dut.funct7);
+                     dut.opcode_id, dut.funct3_ex, dut.funct7_id);
             $display("RD       : x%0d       RS1      : x%0d       RS2   : x%0d",
-                     dut.rd, dut.rs1, dut.rs2);
-            $display("RS1 DATA : %08h    RS2 DATA : %08h", dut.rs1_data, dut.rs2_data);
-            $display("ALU A    : %08h    ALU B    : %08h", dut.alu_a, dut.alu_b);
+                     dut.destination_ex, dut.source_1_ex, dut.source_2_ex);
+            $display("RS1 DATA : %08h    RS2 DATA : %08h", dut.forwarded_source_1_ex, dut.forwarded_source_2_ex);
+            $display("ALU A    : %08h    ALU B    : %08h", dut.alu_operand_a_ex, dut.alu_operand_b_ex);
             $display("ALU OP   : %04b        RESULT   : %08h    ZERO: %b",
-                     dut.alu_op, dut.alu_result, dut.alu_zero);
+                     dut.alu_operation_ex, dut.alu_result_ex, dut.alu_zero_ex);
             $display("CONTROL  : reg_write=%b mem_read=%b mem_write=%b branch=%b jump=%b",
-                     dut.reg_write, dut.mem_read, dut.mem_write, dut.branch, dut.jump);
+                     dut.reg_write_ex, dut.mem_read_ex, dut.mem_write_ex, dut.branch_ex, dut.jump_ex);
             $display("MUXES    : alu_a_src=%b alu_b_src=%b wb_sel=%02b",
-                     dut.alu_a_src, dut.alu_b_src, dut.wb_sel);
-            $display("BRANCH   : take=%b target=%08h", dut.take_branch, dut.branch_target);
+                     dut.alu_a_is_pc_ex, dut.alu_b_is_immediate_ex, dut.writeback_select_ex);
+            $display("BRANCH   : take=%b target=%08h", dut.branch_taken_ex, dut.branch_target_ex);
             $display("MEM/WB   : mem_read=%08h write_data=%08h",
-                     dut.mem_read_data, dut.write_data);
+                     dut.memory_read_value_mem, dut.writeback_value_wb);
             $display("REGISTERS:");
 
             for (reg_index = 0; reg_index < 32; reg_index = reg_index + 1) begin
@@ -77,7 +96,13 @@ module program_tb;
     task automatic write_trace_header;
         begin
             $fwrite(trace_fd,
-                "cycle,pc,instr,next_pc,opcode,funct3,funct7,rd,rs1,rs2,imm,");
+                "cycle,stall,flush,if_pc,if_instr,id_valid,id_pc,id_instr,");
+            $fwrite(trace_fd,
+                "ex_valid,ex_pc,ex_instr,mem_valid,mem_pc,mem_instr,wb_valid,wb_pc,wb_instr,");
+            $fwrite(trace_fd,
+                "mem_commit_write,mem_commit_addr,mem_commit_data,wb_commit_write,wb_commit_rd,wb_commit_data,");
+            $fwrite(trace_fd,
+                "next_pc,opcode,funct3,funct7,rd,rs1,rs2,imm,");
             $fwrite(trace_fd,
                 "rs1_data,rs2_data,alu_a,alu_b,alu_op,alu_result,alu_zero,");
             $fwrite(trace_fd,
@@ -95,8 +120,21 @@ module program_tb;
     task automatic write_trace_row;
         begin
             $fwrite(trace_fd,
-                "%0d,%08h,%08h,%08h,%02h,%01h,%02h,%0d,%0d,%0d,%08h,",
-                cycle, trace_pc, trace_instr, trace_next_pc, trace_opcode,
+                "%0d,%0d,%0d,%08h,%08h,%0d,%08h,%08h,",
+                cycle, dut.stall_pipeline, dut.flush_younger_stages, dut.pc_if, dut.instruction_if,
+                valid_id, dut.pc_id, dut.instruction_id);
+            $fwrite(trace_fd,
+                "%0d,%08h,%08h,%0d,%08h,%08h,%0d,%08h,%08h,",
+                valid_ex, pc_ex, instr_ex, valid_mem, pc_mem, instr_mem,
+                valid_wb, pc_wb, instr_wb);
+            $fwrite(trace_fd,
+                "%0d,%08h,%08h,%0d,%0d,%08h,",
+                dut.mem_write_mem, dut.alu_result_mem,
+                dut.store_value_mem, dut.reg_write_wb,
+                dut.destination_wb, dut.writeback_value_wb);
+            $fwrite(trace_fd,
+                "%08h,%02h,%01h,%02h,%0d,%0d,%0d,%08h,",
+                trace_next_pc, trace_opcode,
                 trace_funct3, trace_funct7, trace_rd, trace_rs1, trace_rs2,
                 trace_imm);
             $fwrite(trace_fd,
@@ -119,35 +157,61 @@ module program_tb;
 
     always @(posedge clk) begin
         if (!rst) begin
-            trace_pc = dut.pc_out;
-            trace_instr = dut.instr;
-            trace_next_pc = dut.next_pc;
-            trace_opcode = dut.opcode;
-            trace_funct3 = dut.funct3;
-            trace_funct7 = dut.funct7;
-            trace_rd = dut.rd;
-            trace_rs1 = dut.rs1;
-            trace_rs2 = dut.rs2;
-            trace_imm = dut.imm;
-            trace_rs1_data = dut.rs1_data;
-            trace_rs2_data = dut.rs2_data;
-            trace_alu_a = dut.alu_a;
-            trace_alu_b = dut.alu_b;
-            trace_alu_op = dut.alu_op;
-            trace_alu_result = dut.alu_result;
-            trace_alu_zero = dut.alu_zero;
-            trace_reg_write = dut.reg_write;
-            trace_mem_read = dut.mem_read;
-            trace_mem_write = dut.mem_write;
-            trace_branch = dut.branch;
-            trace_jump = dut.jump;
-            trace_alu_a_src = dut.alu_a_src;
-            trace_alu_b_src = dut.alu_b_src;
-            trace_wb_sel = dut.wb_sel;
-            trace_take_branch = dut.take_branch;
-            trace_branch_target = dut.branch_target;
-            trace_mem_read_data = dut.mem_read_data;
-            trace_write_data = dut.write_data;
+            trace_pc = dut.pc_ex;
+            trace_instr = {dut.imem.mem[dut.pc_ex + 3],
+                           dut.imem.mem[dut.pc_ex + 2],
+                           dut.imem.mem[dut.pc_ex + 1],
+                           dut.imem.mem[dut.pc_ex]};
+            trace_next_pc = dut.next_pc_if;
+            trace_opcode = dut.opcode_id;
+            trace_funct3 = dut.funct3_ex;
+            trace_funct7 = dut.funct7_id;
+            trace_rd = dut.destination_ex;
+            trace_rs1 = dut.source_1_ex;
+            trace_rs2 = dut.source_2_ex;
+            trace_imm = dut.immediate_ex;
+            trace_rs1_data = dut.forwarded_source_1_ex;
+            trace_rs2_data = dut.forwarded_source_2_ex;
+            trace_alu_a = dut.alu_operand_a_ex;
+            trace_alu_b = dut.alu_operand_b_ex;
+            trace_alu_op = dut.alu_operation_ex;
+            trace_alu_result = dut.alu_result_ex;
+            trace_alu_zero = dut.alu_zero_ex;
+            trace_reg_write = dut.reg_write_ex;
+            trace_mem_read = dut.mem_read_ex;
+            trace_mem_write = dut.mem_write_ex;
+            trace_branch = dut.branch_ex;
+            trace_jump = dut.jump_ex;
+            trace_alu_a_src = dut.alu_a_is_pc_ex;
+            trace_alu_b_src = dut.alu_b_is_immediate_ex;
+            trace_wb_sel = dut.writeback_select_ex;
+            trace_take_branch = dut.branch_taken_ex;
+            trace_branch_target = dut.branch_target_ex;
+            trace_mem_read_data = dut.memory_read_value_mem;
+            trace_write_data = dut.writeback_value_wb;
+
+            // Advance the debug tags with the same hold/flush rules as the
+            // corresponding functional pipeline registers.
+            valid_wb <= valid_mem;
+            instr_wb <= instr_mem;
+            pc_wb    <= pc_mem;
+            valid_mem <= valid_ex;
+            instr_mem <= instr_ex;
+            pc_mem    <= pc_ex;
+            if (dut.stall_pipeline || dut.flush_younger_stages) begin
+                valid_ex <= 1'b0;
+                instr_ex <= 32'h00000013;
+                pc_ex    <= 32'b0;
+            end else begin
+                valid_ex <= valid_id;
+                instr_ex <= dut.instruction_id;
+                pc_ex    <= dut.pc_id;
+            end
+            if (dut.flush_younger_stages) begin
+                valid_id <= 1'b0;
+            end else if (!dut.stall_pipeline) begin
+                valid_id <= 1'b1;
+            end
             #1;
             cycle = cycle + 1;
             if ($test$plusargs("debug"))
@@ -164,6 +228,16 @@ module program_tb;
         max_cycles = 100;
         debug_mem_bytes = 32;
         trace_fd = 0;
+        valid_id = 0;
+        valid_ex = 0;
+        valid_mem = 0;
+        valid_wb = 0;
+        instr_ex = 32'h00000013;
+        instr_mem = 32'h00000013;
+        instr_wb = 32'h00000013;
+        pc_ex = 0;
+        pc_mem = 0;
+        pc_wb = 0;
         if ($value$plusargs("cycles=%d", max_cycles))
             $display("Simulation cycle limit: %0d", max_cycles);
         if ($value$plusargs("mem_bytes=%d", debug_mem_bytes)) begin
@@ -198,11 +272,10 @@ module program_tb;
         #2;
 
         $display("x3 = %0d", dut.rf.regs[3]);
-        $display("dmem[0..3] = %02h %02h %02h %02h",
-                dut.dmem.mem[0],
-                dut.dmem.mem[1],
-                dut.dmem.mem[2],
-                dut.dmem.mem[3]);
+        $display("status    = %08h", {dut.dmem.mem[255], dut.dmem.mem[254],
+                                      dut.dmem.mem[253], dut.dmem.mem[252]});
+        $display("signature = %08h", {dut.dmem.mem[251], dut.dmem.mem[250],
+                                      dut.dmem.mem[249], dut.dmem.mem[248]});
 
         if (trace_fd != 0)
             $fclose(trace_fd);

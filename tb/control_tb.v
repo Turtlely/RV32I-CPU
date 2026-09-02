@@ -19,6 +19,8 @@ module control_tb;
     wire       alu_b_src;
     wire [3:0] alu_op;
     wire [1:0] wb_sel;
+    wire uses_rs1;
+    wire uses_rs2;
     integer errors;
     integer op;
 
@@ -48,6 +50,26 @@ module control_tb;
                 $error("Control opcode=%b funct3=%b funct7=%b got=%b%b%b%b%b%b%b_%b_%b",
                        opcode, funct3, funct7, reg_write, mem_read, mem_write, branch,
                        jump, alu_a_src, alu_b_src, alu_op, wb_sel);
+                errors = errors + 1;
+            end
+        end
+    endtask
+
+    task automatic check_uses;
+        input [6:0] op_code;
+        input [2:0] fn3;
+        input [6:0] fn7;
+        input exp_uses_rs1;
+        input exp_uses_rs2;
+        begin
+            opcode = op_code;
+            funct3 = fn3;
+            funct7 = fn7;
+            #1;
+            if ({uses_rs1, uses_rs2} !== {exp_uses_rs1, exp_uses_rs2}) begin
+                $error("Source usage opcode=%b funct3=%b expected=%b%b got=%b%b",
+                       opcode, funct3, exp_uses_rs1, exp_uses_rs2,
+                       uses_rs1, uses_rs2);
                 errors = errors + 1;
             end
         end
@@ -121,6 +143,17 @@ module control_tb;
         check(7'b0010011, 3'b101, 7'b0010000, 0,0,0,0,0,0,0, 4'b0000, 2'b00);
         check(7'b0110011, 3'b000, 7'b0000001, 0,0,0,0,0,0,0, 4'b0000, 2'b00);
         check(7'b0110011, 3'b111, 7'b0100000, 0,0,0,0,0,0,0, 4'b0000, 2'b00);
+
+        // Source-use metadata drives hazard detection and forwarding.
+        check_uses(7'b0110011, 3'b000, 7'b0000000, 1, 1); // ADD
+        check_uses(7'b0010011, 3'b000, 7'b0000000, 1, 0); // ADDI
+        check_uses(7'b0000011, 3'b010, 7'b0000000, 1, 0); // LW
+        check_uses(7'b0100011, 3'b010, 7'b0000000, 1, 1); // SW
+        check_uses(7'b1100011, 3'b000, 7'b0000000, 1, 1); // BEQ
+        check_uses(7'b1100111, 3'b000, 7'b0000000, 1, 0); // JALR
+        check_uses(7'b1101111, 3'b000, 7'b0000000, 0, 0); // JAL
+        check_uses(7'b0110111, 3'b000, 7'b0000000, 0, 0); // LUI
+        check_uses(7'b0010111, 3'b000, 7'b0000000, 0, 0); // AUIPC
 
         if (errors == 0) $display("PASS: control_tb");
         else $fatal(1, "FAIL: control_tb had %0d errors", errors);

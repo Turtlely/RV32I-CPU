@@ -32,6 +32,7 @@ module branch_cond (
                 3'b101: take_branch = !alu_result0; // BGE
                 3'b110: take_branch = alu_result0; // BLTU
                 3'b111: take_branch = !alu_result0; // BGEU
+                default: ;
             endcase
         end
     end
